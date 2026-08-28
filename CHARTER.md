@@ -57,6 +57,9 @@ obligation attached.
 | Entity | Count | Location |
 |--------|-------|----------|
 | Source code | 0 | None yet — pre-inception |
+| Landing page | 1 | `README.md` — repo root, links to the ethic and the full lifecycle doc |
+| Consent Ethic practice guide | 1 | `CONSENT_LIFECYCLE.md` |
+| Content license | 1 | `LICENSE` — CC BY 4.0, covers written material only |
 
 ## Provenance
 
