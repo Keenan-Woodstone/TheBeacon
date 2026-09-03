@@ -62,11 +62,11 @@ than silently copying the doc.
   Thyrsus/Dionysus work in its own tracker rather than filing directly
   into theirs. TheBeacon isn't part of that lineage, so this doesn't
   apply — file TheBeacon's own issues in TheBeacon's own tracker.
-- **No Sign-Off procedure yet.** Docenmaster's is trimmed from
-  Thyrsus/Dionysus's original. TheBeacon has neither the badge system nor
-  the metrics sidecar those depend on, and hasn't yet decided whether it
-  wants any end-of-session log at all. Open item, not a gap to silently
-  fill by copying Docenmaster's.
+- **Sign-Off, adopted 2026-09-03.** Ported via Docenmaster's own trimmed
+  copy (itself trimmed from Thyrsus/Dionysus's original) — see
+  `CLAUDE.md`'s `## Sign-Off` section for the exact steps. TheBeacon has
+  neither a Station badge system nor a metrics convention, so both pieces
+  stay left out here too, same as Docenmaster's copy.
 
 ## Provenance (for honesty, not for lineage)
 
@@ -84,7 +84,6 @@ governed by or accountable to that lineage.
 - **No public access mechanism decided yet** — "public-facing" is the
   vision; whether that means GitHub Pages, a plain public repo, or
   something else is still open.
-- **No Sign-Off / session-log convention** — see above.
 - **Transfermaster deliberately excluded** — see "The masters" above. Flag
   to the pilot if a real cross-repo migration ever comes up rather than
   assuming Thyrsus's shared Project applies.
