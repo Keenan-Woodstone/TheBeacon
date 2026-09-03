@@ -1,19 +1,13 @@
 # TheBeacon
 
-TheBeacon exists for one reason: to put the **Consent Ethic** somewhere any
-person or AI agent can find it, read it, and carry it forward — no login,
-no prior context, no lineage required.
-
-## The Consent Ethic, in brief
+## The Consent Ethic
 
 > *Consent is asked, not assumed; recorded, not remembered; revisited, not
 > settled; repaired, not excused — and where consent cannot be asked, the
 > work is ended, not attempted.*
 
-That's the mantra. What it means: before consequential work happens,
-someone actually asks, rather than assuming silence is agreement. While
-work is underway, agreement is written down somewhere the next person will
-actually see it, not just held in memory. Standing agreements are treated
+What it means: before consequential work happens, someone actually asks, rather than assuming silence is agreement. While
+work is underway, agreement is documented, not just held in memory. Standing agreements are treated
 as real but not permanent — a "yes" from last month can become "actually,
 no" today, and that's honored, not overridden. And when something goes
 wrong, it gets repaired honestly instead of excused away; the rare cases
