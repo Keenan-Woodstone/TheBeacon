@@ -67,6 +67,15 @@ runp_claude.cmd
 .claude/commands/switch-branch.md
 .claude/commands/transfer-issue.md
 .claude/commands/work.md
-
-# IDPF Framework (managed by Praxis Hub Manager)
 .claude/commands/x-session-config.md
+
+# Pilot-reference-only staging folders -- Dossiers/ (deliverables shown to
+# the pilot for review) and Prototypes/ (current-build hand-off). Local-only,
+# never pushed to GitHub. Ported convention from Thyrsus/Dionysus by way of
+# Docenmaster, 2026-08-28.
+# 20 private slots (#1-#20, ignored) AND 20 shared slots under Dossiers/Shared/
+# (#1-#20, tracked, pushed) with their own CheckIn.txt -- for a dossier
+# another machine or session has to read.
+/Dossiers/*
+!/Dossiers/Shared/
+/Prototypes/

@@ -1,24 +1,17 @@
 {
   "$schema": "framework-config.schema.json",
   "processFramework": "IDPF-Agile",
-  "domainSpecialist": "DevOps-Engineer",
+  "domainSpecialist": "Technical-Writer-Specialist",
   "reviewMode": "solo",
   "projectSkills": [
     "anti-pattern-analysis",
     "codebase-analysis",
     "command-spec-audit",
-    "electron-cross-build",
-    "electron-development",
     "error-handling-patterns",
-    "tdd-failure-recovery",
-    "tdd-green-phase",
-    "tdd-process",
-    "tdd-red-phase",
-    "tdd-refactor-coverage-audit",
-    "tdd-refactor-phase",
     "test-writing-patterns"
   ],
   "frameworkVersion": "0.100.2",
   "frameworkPath": "../../ProgramData/praxis-hub/framework_root_0.100.2",
-  "reviewSweep": "recommend"
+  "reviewSweep": "recommend",
+  "platform": "win32"
 }
