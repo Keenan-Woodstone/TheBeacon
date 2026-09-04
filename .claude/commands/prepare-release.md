@@ -1,5 +1,5 @@
 ---
-version: "v0.96.2"
+version: "v0.100.2"
 description: Prepare release with PR, merge to main, and tag
 argument-hint: "[version] [--skip-coverage] [--dry-run] [--help]"
 copyright: "Rubrical Works (c) 2026"
@@ -211,8 +211,13 @@ node .claude/scripts/shared/lib/active-label.js remove [TRACKER_NUMBER]
 
 ```bash
 git tag -a $VERSION -m "Release $VERSION"
-git push origin $VERSION
+echo "$VERSION | gates passed | $(git rev-parse HEAD)" > .release-authorized
+git push origin $VERSION; rc=$?
+rm -f .release-authorized
+exit $rc
 ```
+
+**Note:** `.release-authorized` is the marker `.claude/hooks/pre-push` requires before allowing a `v*` tag push. The hook only tests existence and echoes contents verbatim, so this line becomes the release audit record. Cleanup is unconditional — the exit code is captured **before** `rm -f` and propagated after. A plain echo/push/rm sequence is not sufficient: a failed push aborts before the `rm`, and the surviving marker authorizes the next tag push with no gate having run.
 
 ### Step 4.7: Wait for CI Workflow
 
@@ -254,6 +259,7 @@ node .claude/scripts/shared/update-release-notes.js
 - [ ] Tag pushed
 - [ ] CI workflow completed
 - [ ] Release notes updated
+- [ ] **Rules reach context in a freshly-installed project (#2736).** Install this release into a scratch project via PHM, start a session, and confirm a rule's content is actually loaded — ask for something only a rule states. **Do not accept the startup block as evidence:** it renders from the hook, a different channel, and rendered correctly throughout the period in which no rule reached context in any deployed project. `/context` reporting a Memory-files figure far below the rules on disk is the symptom. Manual — needs a real PHM install and a live session; `node .claude/scripts/framework/repro-rules-junction.js` builds the isolated fixture to bisect a failure
 
 <!-- USER-EXTENSION-START: checklist-after-tag -->
 <!-- USER-EXTENSION-END: checklist-after-tag -->
@@ -314,5 +320,12 @@ Release $VERSION is complete:
 - Tracker issue closed
 - Working branch deleted
 - GitHub Release created
+### Step 6: Closing Cleanup
+The prune is **part of** this step, and this step is **numbered** — what makes the claim hold. `One task per numbered step` now covers it, so an unpruned list surfaces as an unfinished task like any other step. The same claim as prose alone was overridden by the rules beside it (#2641).
+
+**Prune the task list** (unconditional — every path, including early-exit paths where Phase 1 created tasks and later phases never ran):
+1. `TaskList` — enumerate all tasks.
+2. For every task owned by this `/prepare-release` invocation, `TaskUpdate status=deleted`.
+3. Do **not** delete tasks created outside this invocation (user TODOs).
 
 **End of Prepare Release**

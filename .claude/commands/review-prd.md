@@ -1,5 +1,5 @@
 ---
-version: "v0.96.2"
+version: "v0.100.2"
 description: Review a PRD with tracked history (project)
 argument-hint: "#issue [--with ...] [--mode ...] [--force]"
 copyright: "Rubrical Works (c) 2026"
@@ -26,7 +26,7 @@ Review a PRD document linked from a GitHub issue. Delegates setup to `review-pre
 **REQUIRED — routed command, two-phase task creation:**
 1. **Phase 1 — Preamble task only:** `TaskCreate` single preamble task.
 2. **Phase 2 — Bulk after routing:** After preamble confirms path, bulk-create remaining.
-3. **Redirect or early exit:** Mark preamble done, stop.
+3. **Redirect or early exit:** Mark preamble done, prune the task list per Closing Notification and Cleanup part (2), stop.
 4. **Extensions:** Active `USER-EXTENSION` block → Phase 2 task
 5. Mark `in_progress` → `completed`
 6. **Post-Compaction:** Re-read, resume first incomplete.
@@ -62,6 +62,11 @@ Load subjective from `prd-review-criteria.json`. **Decomposition preview:** extr
 
 **2c: Extension Criteria** (if `--with`)
 Auto-evaluate objective; ask subjective.
+**2c-ii: Security Finding Label**
+`--with security`/`--with all` + any ⚠️/❌ security finding → apply the label; all ✅ → apply nothing:
+```bash
+gh issue edit $ISSUE --add-label=security-finding
+```
 
 **2d: Recommendation**
 - **Ready for backlog creation** — No blocking
@@ -80,12 +85,16 @@ Extensions can **escalate** but not downgrade.
 | N | YYYY-MM-DD | Claude | [Brief one-line summary] |
 ```
 **Never edit or delete existing rows.**
+**Step 3a: Branch Auto-Assignment (#2657)** — trigger: issue carries a `test-plan` or `prd` label **and** has no branch assignment; `/create-prd` creates both unassigned, so until close the tracker does not know they exist and `/done --all` cannot discover an in-review test plan. **Reported, not prompted** (unlike `/create-prd` Step 3a): reviewing an issue is already working it on this branch, so no decision remains. Delegate, do not re-derive: `node .claude/scripts/shared/assign-branch.js "$ISSUE"`. **Ordering is load-bearing** — assign **here, before Step 4 finalize runs**, because `review-finalize.js` does its own read-modify-write to increment `**Reviews:** N`, so a write concurrent with or after it races that update, later write wins, loser vanishes with no error. **No open tracker for the current branch → report and continue** that the issue remains unassigned; **never create a branch from a review** — `/assign-branch` owns `gh pmu branch start`. **Already assigned → leave it**: an issue assigned to a different branch is **not moved**; report the existing assignment.
 ### Step 4: Finalize (Self-Contained)
 Write findings to `.tmp-$ISSUE-findings.json`, run:
 ```bash
 node ./.claude/scripts/shared/review-finalize.js $ISSUE -F .tmp-$ISSUE-findings.json
 ```
-Finalize handles: body metadata (`**Reviews:** N` increment), structured comment, label assignment (`reviewed`/`pending`). Clean up temp file.
+Finalize handles: body metadata (`**Reviews:** N` increment), structured comment, label assignment (`reviewed`/`pending`). Clean up temp file. **Read** `.claude/scripts/shared/lib/findings-schema.json` for contract structure, required fields, status values, recommendation values.
+**`type` MUST be `"prd"`** — not `"story"`, `"generic"`, omitted (#2594). Drives two behaviours:
+- **Header verb.** `review-finalize.js` derives `## PRD Review #N`. Any other value emits `## Issue Review #N`, which `/resolve-review` cannot reconcile with a PRD — reports `NO_REVIEW` against a review that exists.
+- **AC check-off suppression.** `prd` is tracker-shaped, so Step 5 leaves the tracker's lifecycle checklist alone instead of checking boxes positionally.
 Non-`--with`: append:
 ```
 Tip: Use --with security,performance to add domain-specific review criteria.
@@ -96,14 +105,17 @@ Available: security, accessibility, performance, chaos, contract, qa, seo, priva
 ```bash
 node .claude/scripts/shared/review-ac-checkoff.js --issue $ISSUE --findings .tmp-$ISSUE-findings.json
 ```
-Report: `"AC check-off: X/Y criteria checked off on issue #$ISSUE."` No status transition — `/create-backlog` owns it.
+Script reads `type` and `recommendation` from findings JSON. With `type: "prd"` it returns `skipped: true` and checks off **no review criteria** — a PRD tracker's checklist is a 3-item lifecycle gate, not the ~20 review criteria, so positional check-off would check whichever box aligned with a passing criterion (#2594).
+It DOES check the one lifecycle gate this review owns — `PRD reviewed` — matched by label, fence-aware, never by position (#2694). Gates owned by other commands (`Test plan approved`, `Ready for backlog creation`) are untouched.
+Report both: `"AC check-off skipped: #$ISSUE is a PRD tracker; checked its PRD reviewed gate, other lifecycle gates left to the commands that close them."` NEVER report `X/Y checked off` here — X is always 0. Read `lifecycleGateChecked` for what was written (`null` = nothing). No status transition — `/create-backlog` owns it.
+**Gate predicate is stricter than the label predicate.** `determineLabel()` tests `startsWith("Ready")`, admitting `Ready with minor revisions`; this step tests `"Ready for"`, which does not. That value earns the `reviewed` label but NOT the gate — reviewed, not yet decomposable. Passing the recommendation rather than a boolean is what stops the two being conflated at the call site.
 **Otherwise:** skip entirely.
 
 <!-- USER-EXTENSION-START: post-review -->
 <!-- USER-EXTENSION-END: post-review -->
 
-### Closing Notification
-Output `closingNotification` from finalize output.
+### Step 6: Closing Notification and Cleanup
+Two parts in order; the prune is **part of** this step, not a trailing step a reader can stop before. **(1)** Output `closingNotification` from finalize output. **(2) Prune the task list** (unconditional — every path, including redirect and early-exit paths where Phase 1 created a preamble task and Phase 2 never ran): `TaskList` to enumerate, then `TaskUpdate status=deleted` for every task owned by this `/review-prd` invocation (Phase 1 preamble, Phase 2 step tasks, `USER-EXTENSION` tasks). Do **not** delete tasks created outside this invocation (user TODOs).
 ---
 ## Error Handling
 | Situation | Response |

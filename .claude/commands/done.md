@@ -1,5 +1,5 @@
 ---
-version: "v0.96.2"
+version: "v0.100.2"
 description: Complete issues with criteria verification and status transitions (project)
 argument-hint: "[#issue... | --all] [--yes|-y] (optional)"
 copyright: "Rubrical Works (c) 2026"
@@ -60,7 +60,12 @@ After preamble succeeds for a single issue, check `context.issue.labels` for `ep
 | `in_progress` | **Warn:** "Sub-issue #N is still in_progress — complete via /work first" |
 | `backlog`/`ready`/other | **Warn:** "Sub-issue #N is in {status} — was never started" |
 
-All `done` → skip processing, proceed to epic. `in_review` exist → process each through standard `/done` (Steps 1–3); per-sub-issue `Sub-issue #N: $TITLE → Done (M/T processed)`; push deferred until after epic. Then run preamble for the epic itself. Final report:
+All `done` → skip processing, proceed to epic. `in_review` exist → process each through standard `/done` (Steps 1–3); per-sub-issue `Sub-issue #N: $TITLE → Done (M/T processed)`; push deferred until after epic.
+**Complete the epic with an explicit close, NEVER the preamble:** `done-preamble.js` refuses to move an `epic`-labelled issue (guard #2367) and reports the refusal as `gates.skippedReason: "epic-guard"` plus a matching `warnings[]` entry (#2670), so running it for the epic cannot move it whatever flags are passed.
+```bash
+gh pmu move $ISSUE --status done --force
+```
+Final report — emit the `Epic: Done` line **only if the close succeeded**; on failure report the epic's actual status and the error instead, since a reported close that did not happen is the defect #2670 was filed against:
 ```
 Epic #$ISSUE: $TITLE — Done
   Sub-issues completed: N
@@ -77,7 +82,26 @@ Epic #$ISSUE: $TITLE — Done
 After each issue moves to done, post a summary comment IF commits referencing the issue exist. `git log --all --oneline --grep="Refs #$ISSUE\|Fixes #$ISSUE\|Closes #$ISSUE"`. No commits → skip (no-op close). Otherwise: get latest SHA + `git diff --name-only $FIRST_COMMIT~1..$LATEST_COMMIT`, construct repo URL from `.gh-pmu.json` `repositories[0]`, post comment via `-F` containing `**Work completed:**` heading, a `Files changed:` bulleted list of backticked paths, and a `Commit: https://github.com/{owner}/{repo}/commit/{sha}` URL line (multiple commits → link latest). **Non-blocking:** comment failure → log warning, continue.
 
 ### Step 2: Push (Batch-Aware)
-Single issue OR last in batch: `git push` → report `Pushed.` Not last → skip → `"Push deferred (N remaining)"`. **No-commit detection:** `git log @{u}..HEAD --oneline` empty → `"Nothing to push"`, skip to Step 3.
+Not last in batch → skip push → `"Push deferred (N remaining)"`. Single issue OR last in batch — four sub-steps, in order. The sync guard (#2635) sits between the no-commit check and the push: when another developer pushed this branch first, a bare push is rejected non-fast-forward and the only spec-less recovery is `--force`, which destroys their commits.
+**2.1 No-commit detection:** `git log @{u}..HEAD --oneline` empty → `"Nothing to push"`, skip to Step 3.
+**2.2 Fetch and pin the remote tip:**
+```bash
+node .claude/scripts/shared/branch-sync-check.js
+```
+Read `data.status` and `data.upstreamSha` — the post-fetch `@{upstream}`, the last commit the remote already has. Persist it for Step 3 so it survives compaction: `echo "$UPSTREAM_SHA" > .tmp-push-base-$ISSUE.txt`. `fetched: false` → status and SHA came from the cached ref: say so, continue — the push in 2.4 is the authoritative check. `success: false` → warn, write an empty file, continue.
+**2.3 Act on `status`:**
+| `status` | Action |
+|---|---|
+| `ahead` | Continue to 2.4. |
+| `diverged` | Another developer pushed while this branch was being worked. **Rebase, not merge:** `git rebase @{u}`. Clean → 2.4. Conflict → capture the paths with `git diff --name-only --diff-filter=U`, then `git rebase --abort`, report the paths, **STOP** — the issue is already Done on the board from Step 1; say so, and that the commits remain local. Recovery by hand: `git rebase @{u}`, resolve, `git rebase --continue`, `git push`. |
+| `up-to-date`, `behind` | Nothing local to push (2.1 catches this; reaching here means the ref moved between the calls). Report, skip to Step 3 as "Nothing to push". |
+| `no-upstream` | Continue to 2.4; git's own push error is the report if none is configured. |
+**Why rebase, not merge:** the per-AC `Refs #N` commits are what `scope-drift-check.js`, `log-changed-files.js`, and `nonstop-audit.js` key off — they match on message, not SHA. A merge commit adds an unattributed commit; a rebase keeps the set intact. Step 4f ran on the pre-rebase tree; Step 3's CI monitor is the check that the rebased tree still passes.
+**2.4 Push:**
+```bash
+git push
+```
+Report `Pushed.` Rejected (non-fast-forward — a push landed between 2.2 and now) → report git's error verbatim and **STOP**; `/done` cannot re-run for a closed issue, so repeat 2.2–2.4 by hand. **NEVER `git push --force` or `--force-with-lease` at this step** — both overwrite the other developer's commits; a rejection means the guard must be repeated, not overridden.
 
 **Only execute after push (Step 2 actually pushed).** If push was deferred (not last in batch) or skipped (nothing to push), skip this extension — same contract as Step 3. Unguarded, a batch fires it once per issue with nothing pushed.
 
@@ -87,10 +111,10 @@ Single issue OR last in batch: `git push` → report `Pushed.` Not last → skip
 ### Step 3: Background CI Monitoring (Batch-Aware)
 **Only after push (Step 2 actually pushed).** Deferred/skipped → skip CI monitoring for this issue.
 
-`sha=$(git rev-parse HEAD)`. Check `context.ci.hasPushWorkflows`: `false` → skip, report `"CI skipped (no push-triggered workflows)"`. **Pre-check paths-ignore:** `shouldSkipMonitoring(changedFiles, pathsIgnore)` is synchronous, returns `boolean`. `pathsIgnore` from workflow YAML; `changedFiles` from the **whole pushed range** — what GitHub evaluates `paths-ignore` against: `git diff --name-only "@{u}@{1}..@{u}"`. `@{u}` is the remote-tracking ref Step 2's push advanced, `@{u}@{1}` its previous value. Derive it here; do NOT carry a SHA from Step 2, whose post-compaction contract carries no variables. All match → skip, `"CI skipped (paths-ignore)"`.
-**Fail open whenever that range cannot be resolved** — skip the pre-check, arm the monitor, report the degradation. Guard the general condition, not a list; known causes: a branch's first push, no configured upstream, reflog unavailable (`core.logAllRefUpdates` disabled). **No `HEAD~1` fallback** — it reinstates the defect exactly where it would fire. Unnecessary monitor is harmless; a missed failure is not.
+`sha=$(git rev-parse HEAD)`. Check `context.ci.hasPushWorkflows`: `false` → skip, report `"CI skipped (no push-triggered workflows)"`. **Pre-check paths-ignore:** `shouldSkipMonitoring(changedFiles, pathsIgnore)` is synchronous, returns `boolean`. `pathsIgnore` from workflow YAML; `changedFiles` from the **whole pushed range** — what GitHub evaluates `paths-ignore` against: `git diff --name-only "$(cat .tmp-push-base-$ISSUE.txt)..@{u}" && rm .tmp-push-base-$ISSUE.txt`. The base is the remote tip Step 2.2 pinned after its fetch and before its push, so the range is exactly this run's push, rebased or not. Read it from the file, never a variable: Step 2's post-compaction contract carries no variables; the file does. Remove it once read. All match → skip, `"CI skipped (paths-ignore)"`.
+**Fail open whenever that range cannot be resolved** — skip the pre-check, arm the monitor, report the degradation. Guard the general condition, not a list; known causes: a branch's first push (`upstreamSha` null → empty file), no configured upstream, missing file (Step 2 never reached 2.2). **No `HEAD~1` fallback** — it reinstates the defect exactly where it would fire. Unnecessary monitor is harmless; a missed failure is not.
 **Why not the tip commit:** `/work` commits per AC and defers push to `/done`, so even a single-issue `/done` pushes several commits and `HEAD~1` sees only the last. A docs-only tip → skip reported, no monitor armed, real CI failure never surfaced.
-**Known limitation (weighed, accepted):** the reflog describes the most recent push *to this working tree*. Two things move the ref between Step 2 and Step 3: an interposed `git fetch`, and a push by **any other process sharing the same `.git`** (second agent session, terminal, editor integration). Pinning `git rev-parse @{u}` pre-push is concurrency-safe but reintroduces cross-step state compaction does not carry. Reflog = compaction-proof, concurrency-fragile; pinned SHA = the reverse. One session per working tree is the normal case, compaction is the recurring failure — hence the reflog.
+**Why a pinned file, not the reflog (#2635):** the reflog's previous ref value is this run's push only while nothing else moves the ref in between — and a push by **any other process sharing the same `.git`** (second agent session, terminal, editor integration) does. (Step 2.2's own fetch does not break it: it moves the ref to exactly the base wanted, or finds nothing new and leaves no entry.) The earlier trade-off accepted that fragility because a SHA in a variable did not survive compaction. A SHA in a file survives both — compaction-proof and immune to concurrent ref movement — which is why 2.2 writes one.
 Otherwise spawn background (`run_in_background: true`):
 ```bash
 node ./.claude/scripts/shared/ci-watch.js --sha $SHA --timeout 600
@@ -113,6 +137,32 @@ Multiple workflows → report per-workflow from `workflows[]`.
 
 ### Step 4: Cleanup
 **MUST DO:** Clear task list.
+---
+## Peer Announcements (#2663)
+Tells other sessions in this working directory that a push is happening, then how it resolved. Peers from `peers-check.js`, payloads from `peer-announce.js`, delivery by `SendMessage`.
+**Take `data.peers`, from the CLI (#2678)** — same access as `/work` Steps 3 and 6:
+```bash
+node .claude/scripts/shared/peers-check.js
+```
+```javascript
+const { buildAnnouncement, EVENTS } = require('.claude/scripts/shared/peer-announce.js');
+const a = buildAnnouncement({ event: EVENTS.PUSH_STARTED, issues, peers });   // peers === envelope.data.peers
+```
+**The two shapes are not interchangeable and picking wrong fails silently.** `checkPeers()` returns `peers` at the **top level**; the CLI wraps it as **`data.peers`**. Requiring the module and reading `data.peers` yields `undefined`, and an `|| []` beside it makes that a genuine empty array before `buildAnnouncement` sees it — after which nothing downstream can tell the mistake from an empty working directory. This section previously named the helper and not the shape, and the reported incident came from this path.
+**A non-array `peers` is now named as such** rather than reported as empty, naming `data.peers`. That guard cannot see an empty array a caller manufactured — hence the shape written here as well as enforced there.
+**Gated by project config (#2702).** Resolve **once per `/done` invocation**, before event 3: `node .claude/scripts/shared/lib/cross-session-config.js`. `groups.push` false → events 3, 4 and 5 **all emit nothing**, no `SendMessage` and no skip notice; push, CI arming and the STOP sequence otherwise unchanged. `notices` false → dispatch unchanged, the dispatch-caveat and skip-reason lines not printed. Absent object, or any omitted key → enabled.
+**The three events are gated as ONE unit — the whole reason the setting is a group.** Every event 3 is followed by exactly one terminal event (4 or 5). A per-event toggle would make "push-started on, ci-terminal off" expressible in valid config, leaving a peer waiting forever for a message that never arrives. Grouping makes that **unrepresentable**, stronger than validating against it: never gate 3, 4 and 5 on separate reads, and never resolve twice within one invocation where the two reads could disagree.
+**Read the resolver; never re-derive the default inline** — a second copy here is how `/done` and `/work` drift apart. **No per-invocation skip notice, deliberately;** discoverability lives in the startup `Peers:` row and `/x-session-config`.
+| Event | When |
+|---|---|
+| 3 — push started | Step 2, **immediately before** `git push`, **once per push** — not once per issue in a deferred batch |
+| 4 — terminal | Step 3, at **arming time**, emitted by `/done` |
+**Event 3 fires only when a push occurs** — Step 2.1 finding nothing to push emits nothing and arms no watch.
+**Every event 3 is followed by exactly one terminal event, on every path.** Both CI skips (`no push-triggered workflows`, `paths-ignore`) are terminal and emitted by `/done`, the only emitter — `ci-watch.js` is never launched on those paths.
+**The armed-monitor event is terminal too**, carrying the run URL and stating that no further announcement will follow. Consequence of the #2660 refutation: `ci-watch.js` is neither slash command nor hook so cannot call `SendMessage`, and the raw-socket send was refuted (six shapes accepted, none delivered). Nothing follows, so the event says so rather than leaving a peer waiting forever. Step 3 failing open over an unresolved range marks the payload **degraded**, reading differently from a clean one.
+**A rejected push emits a correction** to the same peers, stating the commits remain local. `/done` is never made to wait for CI; `wait-for-ci.js` is never invoked from the announcement path.
+**No receiving session runs git** — no pull offer, no `branch-sync-check.js` delegation, no working-tree mutation on receipt. **No announcement asserts a peer is "behind"**: a shared `HEAD` and index make that unreachable, and `branch-sync-check.js` reports `ahead` before the push and `up-to-date` after.
+**Advisory, never a gate.** A helper that throws inside Step 2 does not abort the push.
 ---
 ## Error Handling
 | Situation | Response |
