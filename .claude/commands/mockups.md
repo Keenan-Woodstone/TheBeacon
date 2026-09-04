@@ -1,7 +1,7 @@
 ---
-version: "v0.96.2"
+version: "v0.100.2"
 description: Create text-based or diagrammatic screen mockups (project)
-argument-hint: "[#NN]"
+argument-hint: "[#NN] [--from-image <path>] [--serve [{Name}]] [--port <N>] [--open] [--showcase] [--apply-decisions] [--consolidate]"
 copyright: "Rubrical Works (c) 2026"
 ---
 
@@ -26,6 +26,7 @@ Creates text-based or diagrammatic screen mockups. Fully interactive via `AskUse
 | `--port <N>` / `-p <N>` | No | Pin port; default `3000`. Helper falls back to next free port on conflict; command reports the **actual** port. |
 | `--open` | No | Spawn platform default browser to the listening URL. `win32` → `start "" "<url>"`; `darwin` → `open "<url>"`; `linux` → `xdg-open "<url>"`. Launch failure warns, does not fail command. |
 | `--showcase` | No | Launch Living Style Guide showcase (#2429, Story 1.3). Mockups command bundles into showcase the same way `/design-system` does — categories sourced from screen catalog (UI Components, Iconography). Mutex with `--apply-decisions`. |
+| `--consolidate` | No | Merge selected mockups from several sets into one new set, record supersession, retire sources into `Mockups/Deprecated/` (#2589). No issue number; runs standalone like `--serve`. **Composes with `--serve`** (consolidate, then serve) — NOT mutually exclusive. Every decision is its own `AskUserQuestion`; **never batched**. |
 | `--apply-decisions` | No | Apply pending decisions from `Design-System/showcase/decisions.json` without launching server (#2429, Story 1.4). Implicit resume on subsequent invocations: `applyMockups` in `.claude/scripts/shared/showcase-resume.js` appends rows to `Mockups/.showcase-applied.jsonl`. |
 
 ```
@@ -36,6 +37,10 @@ Creates text-based or diagrammatic screen mockups. Fully interactive via `AskUse
 /mockups --serve sandbox           # Serve Mockups/sandbox/ only
 /mockups --serve --open            # Serve + auto-launch browser
 /mockups --serve --port 8080 --open
+/mockups --showcase                # Launch Living Style Guide showcase
+/mockups --apply-decisions         # Apply pending showcase decisions, no server
+/mockups --consolidate             # Merge sets into one, deprecate sources
+/mockups --consolidate --serve     # Consolidate, then serve the result
 ```
 
 ## Execution Instructions
@@ -287,7 +292,7 @@ Mockup complete.
   Related: /catalog-screens to create or update screen specs.
 ```
 
-### Step 8: Satisfaction Check, Commit Offer, and STOP
+### Step 8: Satisfaction Check and Commit Offer
 
 If files were created/modified:
 
@@ -305,14 +310,26 @@ If files were created/modified:
   Use `Refs #NN` when issue context available — mockup creation does not close issues. No issue context: `"Add/update mockups for {Name}"`.
 - **No:** Skip — do not stage/commit.
 
-**STOP.** Do not proceed without user instruction.
+### Step 9: Consolidate Mockup Sets (when `--consolidate` passed)
+Trigger: `--consolidate` present. Runs standalone (skip Steps 1–8 when no generation requested), as Step 10 does for `--serve`. No issue number required.
+**Composes with `--serve`:** both present → consolidation runs first, Step 10 serves the result — the reason this step precedes Step 10. NOT mutually exclusive, unlike `--showcase`/`--apply-decisions`.
+**Re-read `.claude/metadata/mockups-consolidation.json` from disk** for the ordered decision sequence; never paraphrase from memory. Every interactive decision is its own `AskUserQuestion` — **never batched** — and selection is **per source set** (one listing per `Mockups/{Name}/`), never flattened across sets.
+Contract the sequence implements — the load-bearing outcomes:
+- **Supersession is recorded, not silent:** each carried-forward mockup gains a `**Supersedes:**` header line; the set's `README.md` gains a `## Consolidation` section naming source set, source file, date.
+- **Nothing is moved before the user confirms** consolidation is complete; everything prior writes only into the new set. Target name suggested, overridable, re-prompted on collision — never overwritten.
+- **Deprecation is a move, never a delete.** Affected sources go to `Mockups/Deprecated/` (suggested, overridable), preferring `git mv` so history follows.
+- **Specs travel with their mockups** — `canonicalSpec` repointed, stale `## Related Artifacts` cross-references rewritten via Step 4's rewrite.
+- **Derived state reconciled:** `Mockups/screen-catalog.json` via `loadCatalog`/`upsertScreen`/`saveCatalog`, moved entries to `status: "deprecated"`, threading `upsertScreen`'s pure return into `saveCatalog` (#2380); then `Mockups/NAVIGATION.md` via `renderNavigationMarkdown`.
 
-### Step 9: Serve Mockups (when `--serve` passed)
+### Step 10: Serve Mockups (when `--serve` passed)
+**`Mockups/Deprecated/` is excluded from the served tree** and `status: deprecated` entries are filtered from the showcase bundle (#2589). With `--consolidate`, Step 9 runs first and this step serves the result.
 
 Runs standalone or after Step 8. Steps:
 
 1. **Resolve target:** bare `--serve` → `Mockups/`; `--serve {Name}` → `Mockups/{Name}/`. Missing target → report "Target not found: {path}. Create mockups first." → STOP.
 2. **Port:** use `--port`/`-p` if given, else `3000`. Helper handles in-use fallback internally.
+
+   **Entry point (#2590):** reported URL is browsable without an `index.html` — helper serves a directory's `index.html` when present, else a generated listing. Do **not** pre-create an index, warn about a missing one, or hand the user a deep file path instead of the root URL: a mockup set has no index (Step 5 writes `README.md`), the exact case the listing covers. Hrefs are absolute, so `/{Name}` and `/{Name}/` behave identically.
 3. **Spawn server** via `Bash` with `run_in_background: true`:
    ```bash
    node .claude/scripts/shared/mockups-serve.js --root <target> --port <port>
@@ -334,6 +351,13 @@ Runs standalone or after Step 8. Steps:
 
 Server runs until user kills its shell; `/mockups --serve` itself does NOT block.
 
+### Step 11: Cleanup and STOP
+Two parts, in order. The prune is **part of** this step, and this step is **numbered** and final — `One task per numbered step` now covers it, so an unpruned list surfaces as an unfinished task like any other. The halt is part (2): while it sat in Step 8's TITLE a reader stopped there, before both the prune AND the serve step, now Step 10 (#2641).
+**(1) Prune the task list** (unconditional — every path, including early-exit paths where Phase 1 created tasks and later phases never ran):
+1. `TaskList` — enumerate all tasks.
+2. For every task owned by this `/mockups` invocation, `TaskUpdate status=deleted`.
+3. Do **not** delete tasks created outside this invocation (user TODOs).
+**(2) STOP.** Do not proceed without user instruction.
 ## Error Handling
 
 | Situation | Response |
@@ -348,6 +372,11 @@ Server runs until user kills its shell; `/mockups --serve` itself does NOT block
 | Schema file missing | "Shared schema not found at .claude/metadata/screen-spec-schema.json" → STOP |
 | `--serve`: requested port in use | Helper falls back to next free port; command reports actual port. Not an error. |
 | `--serve`: target `Mockups/` or `Mockups/{Name}/` missing | "Target not found: {path}. Create mockups first." → STOP |
+| `--serve`: served root has no `index.html` | Expected, not an error. Helper renders a listing; report the root URL unchanged. |
+| `--serve`: path is neither file nor directory | Helper returns 404. Not a command failure; server keeps running. |
+| `--consolidate`: fewer than two mockup sets found | "Consolidation needs at least two mockup sets; found {N}." → STOP |
+| `--consolidate`: target name collides with an existing set | Re-prompt for a different name; **never** overwrite an existing set |
+| `--consolidate`: selected source file missing at move time | Report path, skip that file, continue remaining moves; list every skipped path in the final report |
+| `--consolidate`: `git mv` unavailable or fails | Fall back to plain move, warn which was used, continue. History does not follow the file — say so rather than failing consolidation |
 | `--serve --open`: browser launch fails | Warn with launch exit code; leave server running; do NOT fail command |
-
 **End of /mockups Command**
